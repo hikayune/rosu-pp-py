@@ -1,4 +1,4 @@
-name: Build wheels and publish release zips
+name: Build wheels and publish release assets
 
 on:
   push:
@@ -75,10 +75,10 @@ jobs:
           cargo --version
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v3.2.1
+        uses: pypa/cibuildwheel@v3.3.1
         env:
           ROSU_PP_PY_FORCE_BUILD: "1"
-          CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-*"
+          CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
           CIBW_SKIP: "*-musllinux_* *-win32 *-manylinux_i686"
           CIBW_TEST_COMMAND: "python -c \"import rosu_pp_py\""
           CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
@@ -87,28 +87,11 @@ jobs:
             curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
           CIBW_ENVIRONMENT_LINUX: 'PATH="$HOME/.cargo/bin:$PATH"'
 
-      - name: Zip wheels
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          from zipfile import ZIP_DEFLATED, ZipFile
-
-          release_dir = Path("release-zips")
-          release_dir.mkdir(exist_ok=True)
-
-          for wheel in sorted(Path("wheelhouse").glob("*.whl")):
-              zip_path = release_dir / f"{wheel.name}.zip"
-              with ZipFile(zip_path, "w", ZIP_DEFLATED) as archive:
-                  archive.write(wheel, arcname=wheel.name)
-              print(zip_path)
-          PY
-
-      - name: Upload wheel zips
+      - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheel-zips-${{ matrix.label }}
-          path: release-zips/*.zip
+          name: wheels-${{ matrix.label }}
+          path: wheelhouse/*.whl
           if-no-files-found: error
 
   publish-release:
@@ -119,24 +102,38 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download wheel zip artifacts
+      - name: Download wheel artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: wheel-zips-*
-          path: release-zips
+          pattern: wheels-*
+          path: release-wheels
           merge-multiple: true
 
       - name: Publish or update release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ needs.resolve-release-tag.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          ls -lh release-zips
+          shopt -s nullglob
+          wheels=(release-wheels/*.whl)
 
-          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release upload "$TAG_NAME" release-zips/*.zip --clobber
+          if [ ${#wheels[@]} -eq 0 ]; then
+            echo "Nenhuma wheel foi encontrada para publicar." >&2
+            exit 1
+          fi
+
+          ls -lh release-wheels
+
+          if gh release view "$TAG_NAME" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            while IFS= read -r asset; do
+              [ -n "$asset" ] || continue
+              gh release delete-asset "$TAG_NAME" "$asset" --repo "$REPOSITORY" --yes
+            done < <(gh release view "$TAG_NAME" --repo "$REPOSITORY" --json assets --jq '.assets[].name | select(endswith(".whl.zip"))')
+
+            gh release upload "$TAG_NAME" "${wheels[@]}" --repo "$REPOSITORY" --clobber
           else
-            gh release create "$TAG_NAME" release-zips/*.zip --verify-tag --generate-notes
+            gh release create "$TAG_NAME" "${wheels[@]}" --repo "$REPOSITORY" --verify-tag --generate-notes
           fi
