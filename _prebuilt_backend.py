@@ -51,8 +51,9 @@ def _package_version() -> str:
     return str(_project().get("version", "0.0.0"))
 
 
-def _release_tag() -> str:
-    return os.environ.get("ROSU_PP_PY_PREBUILT_TAG") or f"v{_package_version()}"
+def _release_tag() -> Optional[str]:
+    tag = os.environ.get("ROSU_PP_PY_PREBUILT_TAG")
+    return tag.strip() if tag else None
 
 
 def _git_remote_url() -> Optional[str]:
@@ -158,16 +159,26 @@ def _compatibility_score(wheel_name: str, supported_tags: List[Tag]) -> Optional
     return None
 
 
-def _release_assets(repo: str, tag: str) -> List[Dict[str, Any]]:
-    url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
-    return list(_read_json(url).get("assets", []))
+def _release(repo: str, tag: Optional[str]) -> Dict[str, Any]:
+    if tag:
+        url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+    else:
+        url = f"https://api.github.com/repos/{repo}/releases/latest"
+    return _read_json(url)
 
 
-def find_compatible_release_asset(repo: str, tag: str) -> Optional[Tuple[str, str]]:
+def _release_assets(repo: str, tag: Optional[str]) -> Tuple[str, List[Dict[str, Any]]]:
+    release = _release(repo, tag)
+    release_tag = str(release.get("tag_name") or tag or "")
+    return release_tag, list(release.get("assets", []))
+
+
+def find_compatible_release_asset(repo: str, tag: Optional[str] = None) -> Optional[Tuple[str, str, str]]:
     supported_tags = list(sys_tags())
     candidates: List[Tuple[int, str, str]] = []
+    release_tag, assets = _release_assets(repo, tag)
 
-    for asset in _release_assets(repo, tag):
+    for asset in assets:
         asset_name = str(asset.get("name", ""))
         wheel_name = _wheel_name_from_asset(asset_name)
         if not wheel_name:
@@ -183,7 +194,7 @@ def find_compatible_release_asset(repo: str, tag: str) -> Optional[Tuple[str, st
 
     candidates.sort(key=lambda item: item[0])
     _score, asset_name, download_url = candidates[0]
-    return asset_name, download_url
+    return release_tag, asset_name, download_url
 
 
 def _extract_wheel(asset_path: Path, output_dir: Path) -> Optional[str]:
@@ -231,7 +242,7 @@ def download_compatible_wheel(
     if not selected_asset:
         return None
 
-    asset_name, download_url = selected_asset
+    _release_tag_name, asset_name, download_url = selected_asset
     output_dir = Path(wheel_directory)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -316,8 +327,9 @@ def build_wheel(
 
     if os.environ.get("ROSU_PP_PY_ONLY_PREBUILT"):
         repo = _configured_repo() or "repositório não detectado"
+        tag = _release_tag() or "última release"
         raise RuntimeError(
-            f"Nenhuma wheel compatível foi encontrada em {repo} na release {_release_tag()}."
+            f"Nenhuma wheel compatível foi encontrada em {repo} na {tag}."
         )
 
     return _maturin("build_wheel", wheel_directory, config_settings, metadata_directory)

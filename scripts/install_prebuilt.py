@@ -28,7 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--tag",
-        help="Tag da release. Por padrão, usa v<project.version>.",
+        help="Tag da release. Por padrão, usa a última release publicada no GitHub.",
     )
     parser.add_argument(
         "--force-reinstall",
@@ -75,7 +75,8 @@ def main() -> int:
             return 1
 
         wheel_path = Path(temp_dir) / wheel_name
-        print(f"Instalando {wheel_name} de {repo}@{tag}...")
+        release = tag or "última release"
+        print(f"Instalando {wheel_name} de {repo} ({release})...")
         install_wheel(wheel_path, args.force_reinstall, args.no_deps)
 
     return 0

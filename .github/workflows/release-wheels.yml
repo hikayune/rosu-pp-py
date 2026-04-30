@@ -2,21 +2,43 @@ name: Build wheels and publish release zips
 
 on:
   push:
-    tags:
-      - "v*"
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to publish, for example v3.1.0"
-        required: true
-        type: string
 
 permissions:
   contents: write
 
 jobs:
+  resolve-release-tag:
+    name: Resolve latest release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve latest tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags
+          tag="$(git tag --sort=-v:refname | head -n 1)"
+
+          if [ -z "$tag" ]; then
+            echo "Nenhuma tag foi encontrada. Crie uma tag antes de publicar os assets da release." >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Using release tag: $tag"
+
   build-wheels:
     name: Build ${{ matrix.label }} wheels
+    needs: resolve-release-tag
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -38,8 +60,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -93,7 +113,9 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release assets
-    needs: build-wheels
+    needs:
+      - resolve-release-tag
+      - build-wheels
     runs-on: ubuntu-latest
 
     steps:
@@ -107,7 +129,7 @@ jobs:
       - name: Publish or update release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          TAG_NAME: ${{ needs.resolve-release-tag.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail

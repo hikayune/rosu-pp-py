@@ -187,29 +187,32 @@ $ pip install git+https://github.com/OWNER/REPO@v3.1.0
 ### Installing from GitHub Release wheels
 
 This fork can publish pre-built wheels as `.zip` files in GitHub Releases.
-When installed with `pip install git+https://github.com/OWNER/REPO@v3.1.0`, the custom build backend detects the current Python, operating system, and CPU architecture, downloads the matching release `.zip`, extracts the `.whl`, and installs it. If no compatible wheel is found, it falls back to a normal local `maturin` build.
+When installed with `pip install git+https://github.com/OWNER/REPO`, the custom build backend detects the current Python, operating system, and CPU architecture, reads the latest GitHub Release, downloads the matching release `.zip`, extracts the `.whl`, and installs it. If no compatible wheel is found, it falls back to a normal local `maturin` build.
 
-To force release-only installation and fail instead of compiling locally:
-
-```sh
-ROSU_PP_PY_ONLY_PREBUILT=1 pip install git+https://github.com/OWNER/REPO@v3.1.0
-```
-
-You can also run the installer script directly from a clone:
+To force a pre-built wheel and fail instead of compiling locally, run:
 
 ```sh
-python scripts/install_prebuilt.py --repo OWNER/REPO --tag v3.1.0
+ROSU_PP_PY_ONLY_PREBUILT=1 pip install git+https://github.com/OWNER/REPO
 ```
 
-To publish wheels, push a tag like `v3.1.0`. The workflow `.github/workflows/release-wheels.yml` builds Linux x86_64, Linux aarch64, Windows AMD64, and Windows ARM64 wheels, zips each wheel, and uploads those zip files to the GitHub Release.
+You can still pin a release explicitly when needed:
 
-## Learn More
-- [rosu-pp]
-- [Rust]
-- [PyO3]
+```sh
+ROSU_PP_PY_PREBUILT_TAG=v3.1.0 pip install git+https://github.com/OWNER/REPO
+```
 
-[osu!]: https://osu.ppy.sh/home
-[Rust]: https://www.rust-lang.org
-[rosu-pp]: https://github.com/MaxOhn/rosu-pp
-[PyO3]: https://github.com/PyO3/pyo3
-[Python]: https://www.python.org/downloads/
+Manual install:
+
+```sh
+python scripts/install_prebuilt.py --repo OWNER/REPO
+```
+
+To publish wheels, push any commit to the repository. The workflow `.github/workflows/release-wheels.yml` resolves the latest Git tag automatically, builds Linux x86_64, Linux aarch64, Windows AMD64, and Windows ARM64 wheels, zips each wheel, and uploads those zip files to that GitHub Release.
+
+Create at least one tag before the first run:
+
+```sh
+git tag v3.1.0
+git push origin v3.1.0
+```
+
