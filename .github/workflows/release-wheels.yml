@@ -1,0 +1,120 @@
+name: Build wheels and publish release zips
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish, for example v3.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-wheels:
+    name: Build ${{ matrix.label }} wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x86_64
+            os: ubuntu-latest
+            cibw_archs: x86_64
+          - label: linux-aarch64
+            os: ubuntu-24.04-arm
+            cibw_archs: aarch64
+          - label: windows-amd64
+            os: windows-latest
+            cibw_archs: AMD64
+          - label: windows-arm64
+            os: windows-11-arm
+            cibw_archs: ARM64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Rust on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v3.2.1
+        env:
+          ROSU_PP_PY_FORCE_BUILD: "1"
+          CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-*"
+          CIBW_SKIP: "*-musllinux_* *-win32 *-manylinux_i686"
+          CIBW_TEST_COMMAND: "python -c \"import rosu_pp_py\""
+          CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
+          CIBW_ARCHS_WINDOWS: ${{ matrix.cibw_archs }}
+          CIBW_BEFORE_ALL_LINUX: >-
+            curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+          CIBW_ENVIRONMENT_LINUX: 'PATH="$HOME/.cargo/bin:$PATH"'
+
+      - name: Zip wheels
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          release_dir = Path("release-zips")
+          release_dir.mkdir(exist_ok=True)
+
+          for wheel in sorted(Path("wheelhouse").glob("*.whl")):
+              zip_path = release_dir / f"{wheel.name}.zip"
+              with ZipFile(zip_path, "w", ZIP_DEFLATED) as archive:
+                  archive.write(wheel, arcname=wheel.name)
+              print(zip_path)
+          PY
+
+      - name: Upload wheel zips
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-zips-${{ matrix.label }}
+          path: release-zips/*.zip
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release assets
+    needs: build-wheels
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download wheel zip artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-zips-*
+          path: release-zips
+          merge-multiple: true
+
+      - name: Publish or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -lh release-zips
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" release-zips/*.zip --clobber
+          else
+            gh release create "$TAG_NAME" release-zips/*.zip --verify-tag --generate-notes
+          fi
